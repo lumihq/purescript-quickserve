@@ -2,12 +2,13 @@ module QuickServe
   ( class Servable
   , serveWith
   , class IsResponse
-  , encodeResponse
+  , sendResponse
   , responseType
   , class IsRequest
   , decodeRequest
   , requestType
   , JSON(..)
+  , StreamingResponse(..)
   , Method(..)
   , GET
   , POST
@@ -47,7 +48,7 @@ import Data.String (split)
 import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
 import Node.Encoding (Encoding(..))
 import Node.HTTP (HTTP, ListenOptions, Request, Response, createServer, listen, requestAsStream, requestMethod, requestURL, responseAsStream, setHeader, setStatusCode, setStatusMessage)
-import Node.Stream (end, onDataString, onEnd, onError, writeString)
+import Node.Stream (Readable, Writable, end, onDataString, onEnd, onError, pipe, writeString)
 import Node.URL (parse)
 import Type.Proxy (Proxy(..))
 import Type.Row (class RowToList, Cons, Nil, RLProxy(..), kind RowList)
@@ -103,12 +104,17 @@ quickServe opts serve = do
   listen server opts (log ("Listening on port " <> show (_.port opts)))
 
 -- | A type class for response data.
-class IsResponse response where
-  encodeResponse :: response -> String
+class IsResponse eff response | response -> eff where
+  sendResponse
+    :: forall r
+     . response
+    -> Writable r (http :: HTTP | eff)
+    -> Eff (http :: HTTP | eff) Unit
+    -> Eff (http :: HTTP | eff) Unit
   responseType :: Proxy response -> String
 
-instance isResponseString :: IsResponse String where
-  encodeResponse = id
+instance isResponseString :: IsResponse eff String where
+  sendResponse res str done = void (writeString str UTF8 res done)
   responseType _ = "text/plain"
 
 -- | A type class for request data.
@@ -126,9 +132,9 @@ newtype JSON a = JSON a
 
 derive instance newtypeJSON :: Newtype (JSON a) _
 
-instance isResponseJSON :: Encode a => IsResponse (JSON a) where
-  encodeResponse =
-    encodeResponse
+instance isResponseJSON :: Encode a => IsResponse eff (JSON a) where
+  sendResponse =
+    sendResponse
     <<< encodeJSON
     <<< unwrap
   responseType _ = "application/json"
@@ -140,6 +146,17 @@ instance isRequestJSON :: Decode a => IsRequest (JSON a) where
     <<< decodeJSON
     <=< decodeRequest
   requestType _ = "application/json"
+
+-- | A response type for streaming data.
+newtype StreamingResponse (contentType :: Symbol) r eff =
+  StreamingResponse
+    (Readable r (http :: HTTP | eff))
+
+instance isResponseStream :: IsSymbol contentType => IsResponse eff (StreamingResponse contentType s eff) where
+  sendResponse (StreamingResponse inputStream) outputStream done = do
+    _ <- pipe inputStream outputStream
+    onEnd inputStream done
+  responseType _ = reflectSymbol (SProxy :: SProxy contentType)
 
 -- | A `Servable` type constructor which indicates the expected
 -- | method (GET, POST, PUT, etc.) using a type-level string.
@@ -165,7 +182,7 @@ type POST = Method "POST"
 type PUT = Method "PUT"
 
 instance servableMethod
-    :: (IsSymbol method, IsResponse response)
+    :: (IsSymbol method, IsResponse eff response)
     => Servable eff (Method method eff response) where
   serveWith respond req res Nil = pure do
     let outputStream = responseAsStream res
@@ -174,8 +191,8 @@ instance servableMethod
 
         handleResponse r = do
           setHeader res "Content-Type" (responseType (Proxy :: Proxy response))
-          _ <- writeString outputStream UTF8 (encodeResponse r) (pure unit)
-          end outputStream (pure unit)
+          sendResponse r outputStream do
+            end outputStream (pure unit)
     let actual = requestMethod req
         expected = reflectSymbol (SProxy :: SProxy method)
     if actual == expected

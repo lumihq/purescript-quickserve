@@ -17,39 +17,17 @@ body and query parameters available.
 
 ##### Instances
 ``` purescript
-(IsSymbol method, IsResponse response) => Servable eff (Method method eff response)
+(IsSymbol method, IsResponse eff response) => Servable eff (Method method eff response)
 (IsRequest request, Servable eff service) => Servable eff (RequestBody request -> service)
 (Servable eff service) => Servable eff (Capture -> service)
-(RowToList r l, ServableList eff l r) => Servable eff ({  | r })
-```
-
-#### `quickServe`
-
-``` purescript
-quickServe :: forall eff server. Servable (console :: CONSOLE | eff) server => ListenOptions -> server -> Eff (http :: HTTP, console :: CONSOLE | eff) Unit
-```
-
-Start a web server given some `Servable` type
-and an implementation of that type.
-
-For example:
-
-```purescript
-opts = { hostname: "localhost"
-       , port: 3000
-       , backlog: Nothing
-       }
-
-main = quickServe opts hello where
-  hello :: GET String
-  hello = pure "Hello, World!""
+(RowToList r l, ServableList eff l r) => Servable eff {  | r }
 ```
 
 #### `IsResponse`
 
 ``` purescript
-class IsResponse response  where
-  encodeResponse :: response -> String
+class IsResponse eff response | response -> eff where
+  sendResponse :: forall r. response -> Writable r (http :: HTTP | eff) -> Eff (http :: HTTP | eff) Unit -> Eff (http :: HTTP | eff) Unit
   responseType :: Proxy response -> String
 ```
 
@@ -57,8 +35,9 @@ A type class for response data.
 
 ##### Instances
 ``` purescript
-IsResponse String
-(Encode a) => IsResponse (JSON a)
+IsResponse eff String
+(Encode a) => IsResponse eff (JSON a)
+(IsSymbol contentType) => IsResponse eff (StreamingResponse contentType s eff)
 ```
 
 #### `IsRequest`
@@ -90,8 +69,22 @@ data representation.
 ##### Instances
 ``` purescript
 Newtype (JSON a) _
-(Encode a) => IsResponse (JSON a)
+(Encode a) => IsResponse eff (JSON a)
 (Decode a) => IsRequest (JSON a)
+```
+
+#### `StreamingResponse`
+
+``` purescript
+newtype StreamingResponse (contentType :: Symbol) r eff
+  = StreamingResponse (Readable r (http :: HTTP | eff))
+```
+
+A response type for streaming data.
+
+##### Instances
+``` purescript
+(IsSymbol contentType) => IsResponse eff (StreamingResponse contentType s eff)
 ```
 
 #### `Method`
@@ -114,7 +107,7 @@ Bind (Method m eff)
 Monad (Method m eff)
 MonadEff (http :: HTTP | eff) (Method m eff)
 MonadAff (http :: HTTP | eff) (Method m eff)
-(IsSymbol method, IsResponse response) => Servable eff (Method method eff response)
+(IsSymbol method, IsResponse eff response) => Servable eff (Method method eff response)
 ```
 
 #### `GET`
@@ -187,6 +180,28 @@ main = quickServe opts echo' where
 ``` purescript
 Newtype Capture _
 (Servable eff service) => Servable eff (Capture -> service)
+```
+
+#### `quickServe`
+
+``` purescript
+quickServe :: forall eff server. Servable (console :: CONSOLE | eff) server => ListenOptions -> server -> Eff (http :: HTTP, console :: CONSOLE | eff) Unit
+```
+
+Start a web server given some `Servable` type
+and an implementation of that type.
+
+For example:
+
+```purescript
+opts = { hostname: "localhost"
+       , port: 3000
+       , backlog: Nothing
+       }
+
+main = quickServe opts hello where
+  hello :: GET String
+  hello = pure "Hello, World!""
 ```
 
 #### `ServableList`
