@@ -3,8 +3,8 @@
 #### `Servable`
 
 ``` purescript
-class Servable eff server | server -> eff where
-  serveWith :: server -> Request -> Response -> List String -> Maybe (Eff (http :: HTTP | eff) Unit)
+class Servable server  where
+  serveWith :: server -> Request -> Response -> List String -> Maybe (Effect Unit)
 ```
 
 A type class for types of values which define
@@ -17,17 +17,17 @@ body and query parameters available.
 
 ##### Instances
 ``` purescript
-(IsSymbol method, IsResponse eff response) => Servable eff (Method method eff response)
-(IsRequest request, Servable eff service) => Servable eff (RequestBody request -> service)
-(Servable eff service) => Servable eff (Capture -> service)
-(RowToList r l, ServableList eff l r) => Servable eff {  | r }
+(IsSymbol method, IsResponse response) => Servable (Method method response)
+(IsRequest request, Servable service) => Servable (RequestBody request -> service)
+(Servable service) => Servable (Capture -> service)
+(RowToList r l, ServableList l r) => Servable {  | r }
 ```
 
 #### `IsResponse`
 
 ``` purescript
-class IsResponse eff response | response -> eff where
-  sendResponse :: forall r. response -> Writable r (http :: HTTP | eff) -> Eff (http :: HTTP | eff) Unit -> Eff (http :: HTTP | eff) Unit
+class IsResponse response  where
+  sendResponse :: forall r. response -> Writable r -> Effect Unit -> Effect Unit
   responseType :: Proxy response -> String
 ```
 
@@ -35,9 +35,9 @@ A type class for response data.
 
 ##### Instances
 ``` purescript
-IsResponse eff String
-(Encode a) => IsResponse eff (JSON a)
-(IsSymbol contentType) => IsResponse eff (StreamingResponse contentType s eff)
+IsResponse String
+(Encode a) => IsResponse (JSON a)
+(IsSymbol contentType) => IsResponse (StreamingResponse contentType s)
 ```
 
 #### `IsRequest`
@@ -69,29 +69,29 @@ data representation.
 ##### Instances
 ``` purescript
 Newtype (JSON a) _
-(Encode a) => IsResponse eff (JSON a)
+(Encode a) => IsResponse (JSON a)
 (Decode a) => IsRequest (JSON a)
 ```
 
 #### `StreamingResponse`
 
 ``` purescript
-newtype StreamingResponse (contentType :: Symbol) r eff
-  = StreamingResponse (Readable r (http :: HTTP | eff))
+newtype StreamingResponse (contentType :: Symbol) r
+  = StreamingResponse (Readable r)
 ```
 
 A response type for streaming data.
 
 ##### Instances
 ``` purescript
-(IsSymbol contentType) => IsResponse eff (StreamingResponse contentType s eff)
+(IsSymbol contentType) => IsResponse (StreamingResponse contentType s)
 ```
 
 #### `Method`
 
 ``` purescript
-newtype Method (m :: Symbol) eff response
-  = Method (Aff (http :: HTTP | eff) response)
+newtype Method (m :: Symbol) response
+  = Method (Aff response)
 ```
 
 A `Servable` type constructor which indicates the expected
@@ -99,15 +99,15 @@ method (GET, POST, PUT, etc.) using a type-level string.
 
 ##### Instances
 ``` purescript
-Newtype (Method m eff response) _
-Functor (Method m eff)
-Apply (Method m eff)
-Applicative (Method m eff)
-Bind (Method m eff)
-Monad (Method m eff)
-MonadEff (http :: HTTP | eff) (Method m eff)
-MonadAff (http :: HTTP | eff) (Method m eff)
-(IsSymbol method, IsResponse eff response) => Servable eff (Method method eff response)
+Newtype (Method m response) _
+Functor (Method m)
+Apply (Method m)
+Applicative (Method m)
+Bind (Method m)
+Monad (Method m)
+MonadEffect (Method m)
+MonadAff (Method m)
+(IsSymbol method, IsResponse response) => Servable (Method method response)
 ```
 
 #### `GET`
@@ -155,7 +155,7 @@ main = quickServe opts echo where
 ##### Instances
 ``` purescript
 Newtype (RequestBody a) _
-(IsRequest request, Servable eff service) => Servable eff (RequestBody request -> service)
+(IsRequest request, Servable service) => Servable (RequestBody request -> service)
 ```
 
 #### `Capture`
@@ -179,13 +179,13 @@ main = quickServe opts echo' where
 ##### Instances
 ``` purescript
 Newtype Capture _
-(Servable eff service) => Servable eff (Capture -> service)
+(Servable service) => Servable (Capture -> service)
 ```
 
 #### `quickServe`
 
 ``` purescript
-quickServe :: forall eff server. Servable (console :: CONSOLE | eff) server => ListenOptions -> server -> Eff (http :: HTTP, console :: CONSOLE | eff) Unit
+quickServe :: forall server. Servable server => ListenOptions -> server -> Effect Unit
 ```
 
 Start a web server given some `Servable` type
@@ -207,14 +207,14 @@ main = quickServe opts hello where
 #### `ServableList`
 
 ``` purescript
-class ServableList eff (l :: RowList) (r :: # Type) | l -> r where
-  serveListWith :: RLProxy l -> {  | r } -> Request -> Response -> List String -> Maybe (Eff (http :: HTTP | eff) Unit)
+class ServableList (l :: RowList) (r :: # Type) | l -> r where
+  serveListWith :: RLProxy l -> {  | r } -> Request -> Response -> List String -> Maybe (Effect Unit)
 ```
 
 ##### Instances
 ``` purescript
-ServableList eff Nil ()
-(IsSymbol route, Servable eff s, ServableList eff l r1, RowCons route s r1 r) => ServableList eff (Cons route s l) r
+ServableList Nil ()
+(IsSymbol route, Servable s, ServableList l r1, Cons route s r1 r) => ServableList (Cons route s l) r
 ```
 
 
